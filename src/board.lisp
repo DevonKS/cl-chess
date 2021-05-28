@@ -591,3 +591,9 @@
         until (not (null outcome))
         for move = (get-move board-state)
         finally (format t "~a~%" outcome)))
+
+;; TODO
+;; Lookup legal moves and enemy attacked squares only once in turn.
+;; FEN import and export
+;; SAN moves
+;; AI
