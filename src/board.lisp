@@ -9,7 +9,7 @@
 
 (defun make-board-state ()
   (fset:map (:board (make-board))
-            (:turn WHITE)
+            (:turn +white+)
             (:moves (fset:empty-seq))
             (:num-half-moves 0)
             (:num-full-moves 0)
@@ -75,46 +75,46 @@
   (str:concat (index->square (first move)) (index->square (second move)) (third move)))
 
 (defun piece-belongs-to-color (piece color)
-  (member piece (if (eq WHITE color)
-                    WHITE-PIECES
-                    BLACK-PIECES)))
+  (member piece (if (eq +white+ color)
+                    +white-pieces+
+                    +black-pieces+)))
 
 (defun enemy-color (color)
-  (if (eq WHITE color)
-      BLACK
-      WHITE))
+  (if (eq +white+ color)
+      +black+
+      +white+))
 
 (defun enemy-pieces (color)
-  (if (eq WHITE color)
-      BLACK-PIECES
-      WHITE-PIECES))
+  (if (eq +white+ color)
+      +black-pieces+
+      +white-pieces+))
 
 (defun enemy-piece? (color piece)
   (piece-belongs-to-color piece (enemy-color color)))
 
 (defun is-rook? (piece)
-  (or (eq piece WHITE-ROOK)
-      (eq piece BLACK-ROOK)))
+  (or (eq piece +white-rook+)
+      (eq piece +black-rook+)))
 
 (defun is-knight? (piece)
-  (or (eq piece WHITE-KNIGHT)
-      (eq piece BLACK-KNIGHT)))
+  (or (eq piece +white-knight+)
+      (eq piece +black-knight+)))
 
 (defun is-bishop? (piece)
-  (or (eq piece WHITE-BISHOP)
-      (eq piece BLACK-BISHOP)))
+  (or (eq piece +white-bishop+)
+      (eq piece +black-bishop+)))
 
 (defun is-queen? (piece)
-  (or (eq piece WHITE-QUEEN)
-      (eq piece BLACK-QUEEN)))
+  (or (eq piece +white-queen+)
+      (eq piece +black-queen+)))
 
 (defun is-king? (piece)
-  (or (eq piece WHITE-KING)
-      (eq piece BLACK-KING)))
+  (or (eq piece +white-king+)
+      (eq piece +black-king+)))
 
 (defun is-pawn? (piece)
-  (or (eq piece WHITE-PAWN)
-      (eq piece BLACK-PAWN)))
+  (or (eq piece +white-pawn+)
+      (eq piece +black-pawn+)))
 
 (defun same-rank? (source-index dest-index)
   (= (row-num source-index) (row-num dest-index)))
@@ -131,7 +131,7 @@
        (abs (- dest-col-num source-col-num)))))
 
 (defun empty? (board index)
-  (eq EMPTY-SQUARE (fset:@ board index)))
+  (eq +empty-square+ (fset:@ board index)))
 
 (defun range (start end &key (step 1))
   (alexandria:iota (ceiling (abs (- end start))
@@ -149,8 +149,8 @@
   (remove-if-not
    (lambda (piece-index)
      (member (first piece-index)
-             (list WHITE-ROOK WHITE-BISHOP WHITE-QUEEN
-                   BLACK-ROOK BLACK-BISHOP BLACK-QUEEN)))
+             (list +white-rook+ +white-bishop+ +white-queen+
+                   +black-rook+ +black-bishop+ +black-queen+)))
    (get-pieces board color)))
 
 ;; FIXME might be better logic (but uglier code) to not have to rely on board here
@@ -182,7 +182,7 @@
          (map
           'list
           (lambda (x) (generate-moves-in-step color board index x :include-attacking? include-attacking?))
-          (fset:@ PIECE-DIRECTIONS ROOK))))
+          (fset:@ +piece-directions+ +rook+))))
 
 (defun generate-knight-moves (color board index &key (include-attacking? nil))
   (validate-moves
@@ -190,7 +190,7 @@
    board
    (map 'list
         (lambda (index-dir) (+ index index-dir))
-        (fset:@ PIECE-DIRECTIONS KNIGHT))
+        (fset:@ +piece-directions+ +knight+))
    :include-attacking? include-attacking?))
 
 (defun generate-bishop-moves (color board index &key (include-attacking? nil))
@@ -198,7 +198,7 @@
          (map
           'list
           (lambda (step) (generate-moves-in-step color board index step :include-attacking? include-attacking?))
-          (fset:@ PIECE-DIRECTIONS BISHOP))))
+          (fset:@ +piece-directions+ +bishop+))))
 
 (defun generate-queen-moves (color board index &key (include-attacking? nil))
   (append (generate-rook-moves color board index :include-attacking? include-attacking?)
@@ -211,21 +211,21 @@
    board
    (map 'list
         (lambda (index-dir) (+ index index-dir))
-        (fset:@ PIECE-DIRECTIONS KING))
+        (fset:@ +piece-directions+ +king+))
    :include-attacking? include-attacking?))
 
 (defun generate-pawn-moves (en-passant-index color board index &key (include-attacking? nil))
-  (let* ((white? (eq WHITE color))
+  (let* ((white? (eq +white+ color))
          (promotion? (= (row-num index)
                         (if white? 1 6)))
-         (pawn-piece (if white? WHITE-PAWN BLACK-PAWN))
+         (pawn-piece (if white? +white-pawn+ +black-pawn+))
          (move-indices (map 'list
                             (lambda (index-dir) (+ index index-dir))
-                            (fset:@ PIECE-DIRECTIONS pawn-piece)))
+                            (fset:@ +piece-directions+ pawn-piece)))
          (moves (remove-if
                  (lambda (dest-index)
-                   (let* ((double-move (= (+ SOUTH SOUTH) (abs (- dest-index index))))
-                          (single-move (= SOUTH (abs (- dest-index index))))
+                   (let* ((double-move (= (+ +south+ +south+) (abs (- dest-index index))))
+                          (single-move (= +south+ (abs (- dest-index index))))
                           (diagonal-move (not (or double-move
                                                   single-move))))
                      (or (not (in-board? board dest-index))
@@ -236,7 +236,7 @@
                          (and double-move
                               (or
                                (not (empty? board dest-index))
-                               (not (empty? board (+ dest-index (if white? SOUTH NORTH))))))
+                               (not (empty? board (+ dest-index (if white? +south+ +north+))))))
                          (and double-move
                               (not (= (row-num index)
                                       (if white? 6 1))))
@@ -267,20 +267,20 @@
          (same-rank? (same-rank? i1 i2))
          (same-diagonal? (same-diagonal? i1 i2))
          (step (cond
-                 ((and same-rank? backwards-move?) WEST)
-                 ((and same-rank? (not backwards-move?)) EAST)
-                 ((and same-file? backwards-move?) NORTH)
-                 ((and same-file? (not backwards-move?)) SOUTH)
-                 ((and same-diagonal? backwards-move? (not backwards-diagonal?)) (+ NORTH EAST))
-                 ((and same-diagonal? backwards-move? backwards-diagonal?) (+ NORTH WEST))
-                 ((and same-diagonal? (not backwards-move?) backwards-diagonal?) (+ SOUTH WEST))
-                 ((and same-diagonal? (not backwards-move?) (not backwards-diagonal?)) (+ SOUTH EAST))))
+                 ((and same-rank? backwards-move?) +west+)
+                 ((and same-rank? (not backwards-move?)) +east+)
+                 ((and same-file? backwards-move?) +north+)
+                 ((and same-file? (not backwards-move?)) +south+)
+                 ((and same-diagonal? backwards-move? (not backwards-diagonal?)) (+ +north+ +east+))
+                 ((and same-diagonal? backwards-move? backwards-diagonal?) (+ +north+ +west+))
+                 ((and same-diagonal? (not backwards-move?) backwards-diagonal?) (+ +south+ +west+))
+                 ((and same-diagonal? (not backwards-move?) (not backwards-diagonal?)) (+ +south+ +east+))))
          (indices (range (+ i1 step) i2 :step step)))
     indices))
 
 (defun find-pinned-pieces (board color)
   (let ((enemy-pinning-pieces (get-pinning-pieces board (enemy-color color)))
-        (king-index (fset:position (if (eq color WHITE) WHITE-KING BLACK-KING) board)))
+        (king-index (fset:position (if (eq color +white+) +white-king+ +black-king+) board)))
     (remove
      nil
      (map 'list
@@ -299,7 +299,7 @@
                 (let* ((indices (find-intermediate-indicies index king-index))
                        (pieces (arrows:->>  indices
                                             (map 'list (lambda (index) (list (fset:@ board index) index)))
-                                            (remove-if (lambda (piece-index) (eq (first piece-index) EMPTY-SQUARE))))))
+                                            (remove-if (lambda (piece-index) (eq (first piece-index) +empty-square+))))))
                   (if (and pieces
                            (= 1 (length pieces))
                            (piece-belongs-to-color (first (first pieces)) color))
@@ -337,7 +337,7 @@
 
 (defun generate-castling-moves (board color castling-rights attacked-indices)
   (arrows:cond-> '()
-                 ((and (eq WHITE color)
+                 ((and (eq +white+ color)
                        (fset:@ castling-rights :white-queenside-castle)
                        (every (lambda (index)
                                 (and
@@ -346,7 +346,7 @@
                               (list 92 93 94)))
                   (append (list (list 95 93))))
 
-                 ((and (eq WHITE color)
+                 ((and (eq +white+ color)
                        (fset:@ castling-rights :white-kingside-castle)
                        (every (lambda (index)
                                 (and
@@ -355,7 +355,7 @@
                               (list 96 97)))
                   (append (list (list 95 97))))
 
-                 ((and (eq BLACK color)
+                 ((and (eq +black+ color)
                        (fset:@ castling-rights :black-queenside-castle)
                        (every (lambda (index)
                                 (and
@@ -364,7 +364,7 @@
                               (list 22 23 24)))
                   (append (list (list 25 23))))
 
-                 ((and (eq BLACK color)
+                 ((and (eq +black+ color)
                        (fset:@ castling-rights :black-kingside-castle)
                        (every (lambda (index)
                                 (and
@@ -393,7 +393,7 @@
          (board (fset:@ board-state :board))
          (en-passant-index (fset:@ board-state :en-passant-index))
          (pinned-pieces (find-pinned-pieces board color))
-         (king-piece (if (eq color WHITE) WHITE-KING BLACK-KING))
+         (king-piece (if (eq color +white+) +white-king+ +black-king+))
          (king-index (fset:position king-piece board))
          (enemy-piece-attacking-king->moves (fset:filter (lambda (_ v)
                                                            (declare (ignore _))
@@ -454,13 +454,13 @@
            (piece (fset:@ board source-index))
            (promotion-piece (when (string/= promotion "")
                               (case promotion
-                                ("q" (if (eq color WHITE) WHITE-QUEEN BLACK-QUEEN))
-                                ("b" (if (eq color WHITE) WHITE-BISHOP BLACK-BISHOP))
-                                ("n" (if (eq color WHITE) WHITE-KNIGHT BLACK-KNIGHT))
-                                ("r" (if (eq color WHITE) WHITE-ROOK BLACK-ROOK)))))
+                                ("q" (if (eq color +white+) +white-queen+ +black-queen+))
+                                ("b" (if (eq color +white+) +white-bishop+ +black-bishop+))
+                                ("n" (if (eq color +white+) +white-knight+ +black-knight+))
+                                ("r" (if (eq color +white+) +white-rook+ +black-rook+)))))
            (new-piece (if promotion-piece promotion-piece piece))
            (new-board (arrows:-> board
-                                 (fset:with source-index EMPTY-SQUARE)
+                                 (fset:with source-index +empty-square+)
                                  (fset:with dest-index new-piece)))
            (pawn-move? (is-pawn? piece))
            (capture? (not (empty? board dest-index)))
@@ -468,13 +468,13 @@
                                     0
                                     (+ (fset:@ board-state :num-half-moves) 1)))
            (num-full-moves (fset:@ board-state :num-full-moves))
-           (new-full-move-count (if (eql BLACK color)
+           (new-full-move-count (if (eql +black+ color)
                                     (+ 1 num-full-moves)
                                     num-full-moves))
-           (en-passant-index (if (or (and (eq WHITE color)
+           (en-passant-index (if (or (and (eq +white+ color)
                                           (= 6 (row-num source-index))
                                           (= 4 (row-num dest-index)))
-                                     (and (eq BLACK color)
+                                     (and (eq +black+ color)
                                           (= 1 (row-num source-index))
                                           (= 3 (row-num dest-index))))
                                  (/ (+ dest-index source-index) 2)
@@ -553,24 +553,24 @@
 
 (defun is-insufficient-material? (board-state)
   (let* ((board (fset:@ board-state :board))
-         (sorted-white-pieces (sort (get-pieces board WHITE) #'eq))
-         (sorted-black-pieces (sort (get-pieces board BLACK) #'eq)))
+         (sorted-white-pieces (sort (get-pieces board +white+) #'eq))
+         (sorted-black-pieces (sort (get-pieces board +black+) #'eq)))
     (or (and (= 1 (length sorted-white-pieces))
-             (eq WHITE-KING (first sorted-white-pieces))
+             (eq +white-king+ (first sorted-white-pieces))
              (= 1 (length sorted-black-pieces))
-             (eq BLACK-KING (first sorted-black-pieces)))
+             (eq +black-king+ (first sorted-black-pieces)))
         (and (= 1 (length sorted-white-pieces))
-             (eq WHITE-KING (first sorted-white-pieces))
+             (eq +white-king+ (first sorted-white-pieces))
              (member (length sorted-black-pieces) (list 2 3))
-             (or (eq (list BLACK-BISHOP BLACK-KING) sorted-black-pieces)
-                 (eq (list BLACK-KING BLACK-KNIGHT) sorted-black-pieces)
-                 (eq (list BLACK-KING BLACK-KNIGHT BLACK-KNIGHT) sorted-black-pieces)))
+             (or (eq (list +black-bishop+ +black-king+) sorted-black-pieces)
+                 (eq (list +black-king+ +black-knight+) sorted-black-pieces)
+                 (eq (list +black-king+ +black-knight+ +black-knight+) sorted-black-pieces)))
         (and (= 1 (length sorted-black-pieces))
-             (eq BLACK-KING (first sorted-black-pieces))
+             (eq +black-king+ (first sorted-black-pieces))
              (member (length sorted-white-pieces) (list 2 3))
-             (or (fset:equal? (fset:set WHITE-BISHOP WHITE-KING) sorted-white-pieces)
-                 (fset:equal? (fset:set WHITE-KING WHITE-KNIGHT) sorted-white-pieces)
-                 (fset:equal? (fset:set WHITE-KING WHITE-KNIGHT WHITE-KNIGHT) sorted-white-pieces))))))
+             (or (fset:equal? (fset:set +white-bishop+ +white-king+) sorted-white-pieces)
+                 (fset:equal? (fset:set +white-king+ +white-knight+) sorted-white-pieces)
+                 (fset:equal? (fset:set +white-king+ +white-knight+ +white-knight+) sorted-white-pieces))))))
 
 (defun in-check? (board-state &optional (enemy-psuedo-legal-moves (generate-psuedo-legal-moves-from-board-state board-state)))
   (let* ((color (fset:@ board-state :turn))
@@ -578,7 +578,7 @@
          (attacked-indices (arrows:->> enemy-psuedo-legal-moves
                                        (map 'list #'second)
                                        (fset:convert 'fset:set)))
-         (king-piece (if (eq color WHITE) WHITE-KING BLACK-KING))
+         (king-piece (if (eq color +white+) +white-king+ +black-king+))
          (king-index (fset:position king-piece board)))
     (fset:contains? attacked-indices king-index)))
 
