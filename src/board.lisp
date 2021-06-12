@@ -29,13 +29,27 @@
            (rank-list (fset:convert 'list rank)))
       (format t "~{~a~^ ~}~%" rank-list))))
 
-(defun row-num (index)
+(defun index->row-num (index)
   (when (<= 20 index 99)
     (- (floor index 10) 2)))
 
-(defun col-num (index)
+(defun index->col-num (index)
   (when (<= 20 index 99)
     (rem index 10)))
+
+(defun index->file (index)
+  (case (index->col-num index)
+    (1 #\a)
+    (2 #\b)
+    (3 #\c)
+    (4 #\d)
+    (5 #\e)
+    (6 #\f)
+    (7 #\g)
+    (8 #\h)))
+
+(defun index->rank (index)
+  (- 8 (index->row-num index)))
 
 (defun square->index (square)
   (let ((file-addition (case (char square 0)
@@ -57,18 +71,8 @@
          20))))
 
 (defun index->square (index)
-  (let* ((row-num (row-num index))
-         (col-num (col-num index))
-         (file (case col-num
-                 (1 #\a)
-                 (2 #\b)
-                 (3 #\c)
-                 (4 #\d)
-                 (5 #\e)
-                 (6 #\f)
-                 (7 #\g)
-                 (8 #\h)))
-         (rank (- 8 row-num)))
+  (let ((file (index->file index))
+        (rank (index->rank index)))
     (format nil "~a~a" file rank)))
 
 (defun move->uci-move-name (move)
@@ -117,16 +121,16 @@
       (eq piece +black-pawn+)))
 
 (defun same-rank? (source-index dest-index)
-  (= (row-num source-index) (row-num dest-index)))
+  (= (index->row-num source-index) (index->row-num dest-index)))
 
 (defun same-file? (source-index dest-index)
-  (= (col-num source-index) (col-num dest-index)))
+  (= (index->col-num source-index) (index->col-num dest-index)))
 
 (defun same-diagonal? (source-index dest-index)
-  (let ((source-row-num (row-num source-index))
-        (source-col-num (col-num source-index))
-        (dest-row-num (row-num dest-index))
-        (dest-col-num (col-num dest-index)))
+  (let ((source-row-num (index->row-num source-index))
+        (source-col-num (index->col-num source-index))
+        (dest-row-num (index->row-num dest-index))
+        (dest-col-num (index->col-num dest-index)))
     (= (abs (- dest-row-num source-row-num))
        (abs (- dest-col-num source-col-num)))))
 
@@ -216,7 +220,7 @@
 
 (defun generate-pawn-moves (en-passant-index color board index &key (include-attacking? nil))
   (let* ((white? (eq +white+ color))
-         (promotion? (= (row-num index)
+         (promotion? (= (index->row-num index)
                         (if white? 1 6)))
          (pawn-piece (if white? +white-pawn+ +black-pawn+))
          (move-indices (map 'list
@@ -238,7 +242,7 @@
                                (not (empty? board dest-index))
                                (not (empty? board (+ dest-index (if white? +south+ +north+))))))
                          (and double-move
-                              (not (= (row-num index)
+                              (not (= (index->row-num index)
                                       (if white? 6 1))))
                          (and diagonal-move
                               (not (or (enemy-piece? color (fset:@ board dest-index))
@@ -259,8 +263,8 @@
   ;; Note this only works if the pieces are in the same file/rank/diagonal
   ;; Otherwise they could result in out of the board errors
   ;; (the index will still be in the board but the path would have travelled outside the board).
-  (let* ((source-col-num (col-num i1))
-         (dest-col-num (col-num i2))
+  (let* ((source-col-num (index->col-num i1))
+         (dest-col-num (index->col-num i2))
          (backwards-move? (< i2 i1))
          (backwards-diagonal? (> source-col-num dest-col-num))
          (same-file? (same-file? i1 i2))
@@ -472,11 +476,11 @@
                                     (+ 1 num-full-moves)
                                     num-full-moves))
            (en-passant-index (if (or (and (eq +white+ color)
-                                          (= 6 (row-num source-index))
-                                          (= 4 (row-num dest-index)))
+                                          (= 6 (index->row-num source-index))
+                                          (= 4 (index->row-num dest-index)))
                                      (and (eq +black+ color)
-                                          (= 1 (row-num source-index))
-                                          (= 3 (row-num dest-index))))
+                                          (= 1 (index->row-num source-index))
+                                          (= 3 (index->row-num dest-index))))
                                  (/ (+ dest-index source-index) 2)
                                  nil))
            (new-moves (fset:with-last (fset:@ board-state :moves) move))
@@ -508,6 +512,188 @@
 
 (defun pop-move (board-state)
   (fset:last (fset:@ board-state :previous-board-states)))
+
+(defun board-empty-validation (board-state)
+  (let* ((board (fset:@ board-state :board))
+         (white-pieces (get-pieces board +white+))
+         (black-pieces (get-pieces board +black+)))
+    (if (and (>= (length white-pieces) 1)
+             (>= (length black-pieces) 1))
+        (values t nil)
+        (values nil :EMPTY))))
+
+(defun board-white-king-validation (board-state)
+  (let* ((board (fset:@ board-state :board))
+         (num-white-kings (fset:count +white-king+ board)))
+    (cond
+      ((< num-white-kings 1) (values nil :NO-WHITE-KING))
+      ((> num-white-kings 1) (values nil :TOO-MANY-WHITE-KINGS))
+      (t (values t nil)))))
+
+(defun board-black-king-validation (board-state)
+  (let* ((board (fset:@ board-state :board))
+         (num-black-kings (fset:count +black-king+ board)))
+    (cond
+      ((< num-black-kings 1) (values nil :NO-BLACK-KING))
+      ((> num-black-kings 1) (values nil :TOO-MANY-BLACK-KINGS))
+      (t (values t nil)))))
+
+(defun board-white-pieces-validation (board-state)
+  (let ((num-white-pieces (length (get-pieces (fset:@ board-state :board) +white+))))
+    (if (> num-white-pieces 16)
+        (values nil :TOO-MANY-WHITE-PIECES)
+        (values t nil))))
+
+(defun board-black-pieces-validation (board-state)
+  (let ((num-black-pieces (length (get-pieces (fset:@ board-state :board) +black+))))
+    (if (> num-black-pieces 16)
+        (values nil :TOO-MANY-BLACK-PIECES)
+        (values t nil))))
+
+(defun board-white-pawns-validation (board-state)
+  (let* ((board (fset:@ board-state :board))
+         (num-white-pawns (fset:count +white-pawn+ board)))
+    (if (> num-white-pawns 8)
+        (values nil :TOO-MANY-WHITE-PAWNS)
+        (values t nil))))
+
+(defun board-black-pawns-validation (board-state)
+  (let* ((board (fset:@ board-state :board))
+         (num-black-pawns (fset:count +black-pawn+ board)))
+    (if (> num-black-pawns 8)
+        (values nil :TOO-MANY-BLACK-PAWNS)
+        (values t nil))))
+
+(defun board-white-pawns-backrank-validation (board-state)
+  (let* ((white-pieces (get-pieces (fset:@ board-state :board) +white+))
+         (white-pawns (remove-if-not (lambda (x) (eq (first x) +white-pawn+)) white-pieces))
+         (white-pawn-indices (map 'list #'second white-pawns)))
+    (if (some (lambda (x) (= 8 (index->rank x))) white-pawn-indices)
+        (values nil :WHITE-PAWN-ON-BACKRANK)
+        (values t nil))))
+
+(defun board-black-pawns-backrank-validation (board-state)
+  (let* ((black-pieces (get-pieces (fset:@ board-state :board) +black+))
+         (black-pawns (remove-if-not (lambda (x) (eq (first x) +black-pawn+)) black-pieces))
+         (black-pawn-indices (map 'list #'second black-pawns)))
+    (if (some (lambda (x) (= 1 (index->rank x))) black-pawn-indices)
+        (values nil :BLACK-PAWN-ON-BACKRANK)
+        (values t nil))))
+
+(defun board-white-kingside-castle-validation (board-state)
+  (if (and (fset:@ board-state :white-kingside-castle)
+           (or (not (eq (fset:@ (fset:@ board-state :board) 95) +white-king+))
+               (not (eq (fset:@ (fset:@ board-state :board) 98) +white-rook+))))
+      (values nil :INVALID-WHITE-KINGSIDE-CASTLE-RIGHT)
+      (values t nil)))
+
+(defun board-white-queenside-castle-validation (board-state)
+  (if (and (fset:@ board-state :white-queenside-castle)
+           (or (not (eq (fset:@ (fset:@ board-state :board) 95) +white-king+))
+               (not (eq (fset:@ (fset:@ board-state :board) 91) +white-rook+))))
+      (values nil :INVALID-WHITE-QUEENSIDE-CASTLE-RIGHT)
+      (values t nil)))
+
+(defun board-black-kingside-castle-validation (board-state)
+  (if (and (fset:@ board-state :black-kingside-castle)
+           (or (not (eq (fset:@ (fset:@ board-state :board) 25) +black-king+))
+               (not (eq (fset:@ (fset:@ board-state :board) 28) +black-rook+))))
+      (values nil :INVALID-BLACK-KINGSIDE-CASTLE-RIGHT)
+      (values t nil)))
+
+(defun board-black-queenside-castle-validation (board-state)
+  (if (and (fset:@ board-state :black-queenside-castle)
+           (or (not (eq (fset:@ (fset:@ board-state :board) 25) +black-king+))
+               (not (eq (fset:@ (fset:@ board-state :board) 21) +black-rook+))))
+      (values nil :INVALID-BLACK-QUEENSIDE-CASTLE-RIGHT)
+      (values t nil)))
+
+(defun board-en-passant-square-validation (board-state)
+  (let* ((ep-index (fset:@ board-state :en-passant-index))
+         (ep-rank (when ep-index (index->rank ep-index)))
+         (board (fset:@ board-state :board))
+         (invalid-3-ep-rank (and (eq 3 ep-rank)
+                                 (or
+                                  (not (empty? board ep-index))
+                                  (not (empty? board (+ +south+ ep-index)))
+                                  (not (eq (fset:@ board (+ +north+ ep-index)) +white-pawn+)))))
+         (invalid-6-ep-rank (and (eq 6 ep-rank)
+                                 (or
+                                  (not (empty? board ep-index))
+                                  (not (empty? board (+ +north+ ep-index)))
+                                  (not (eq (fset:@ board (+ +south+ ep-index)) +black-pawn+))))))
+    (if (and ep-index
+             (or
+              (not (or (eq 3 ep-rank)
+                       (eq 6 ep-rank)))
+              invalid-3-ep-rank
+              invalid-6-ep-rank))
+        (values nil :INVALID-EN-PASSANT-SQUARE)
+        (values t nil))))
+
+(defun board-opposite-check-validation (board-state)
+  (if (in-check? (fset:with board-state :turn (enemy-color (fset:@ board-state :turn))))
+      (values nil :OPPOSITE-CHECK)
+      (values t nil)))
+
+(defun board-checkers-validation (board-state)
+  (let* ((color (fset:@ board-state :turn))
+         (king-piece (if (eq color +white+) +white-king+ +black-king+))
+         (king-index (fset:position king-piece (fset:@ board-state :board)))
+         (enemy-piece->moves (generate-enemy-piece->moves board-state))
+         (checker-piece->moves (fset:filter (lambda (_ v) (declare (ignore _)) (member king-index (map 'list #'second v))) enemy-piece->moves))
+         (checkers (fset:reduce (lambda (acc k _) (declare (ignore _)) (cons (first k) acc)) checker-piece->moves :initial-value '()))
+         (sorted-checkers (sort checkers #'eq))
+         (pawn (if (eq +white+ color) +white-pawn+ +black-pawn+))
+         (bishop (if (eq +white+ color) +white-bishop+ +black-bishop+))
+         (knight (if (eq +white+ color) +white-knight+ +black-knight+))
+         (invalid-checkers? (or (> (length sorted-checkers) 2)
+                                (and (= (length sorted-checkers) 2)
+                                     (member sorted-checkers (list (list pawn pawn)
+                                                                   (list bishop pawn)
+                                                                   (list knight pawn)
+                                                                   (list bishop bishop)
+                                                                   (list knight knight)))))))
+    (if invalid-checkers?
+        (values nil :INVALID-CHECKERS)
+        (values t nil))))
+
+(defun valid-board-state? (board-state)
+  (let* ((validation-fns (list #'board-empty-validation
+                               #'board-white-king-validation
+                               #'board-black-king-validation
+                               #'board-white-pieces-validation
+                               #'board-black-pieces-validation
+                               #'board-white-pawns-validation
+                               #'board-black-pawns-validation
+                               #'board-white-pawns-backrank-validation
+                               #'board-black-pawns-backrank-validation
+                               #'board-white-kingside-castle-validation
+                               #'board-white-queenside-castle-validation
+                               #'board-black-kingside-castle-validation
+                               #'board-black-queenside-castle-validation
+                               #'board-en-passant-square-validation
+                               #'board-opposite-check-validation
+                               #'board-checkers-validation
+                               ;; TODO Maybe implement these:
+                               ;; #'board-kings-adjacent-validation ;Make sure kings are separated 1 square apart.
+                               ;; #'board-promoted-pieces-validation ;Make there aren't more promoted pieces that missing pawns. not sure how to do this?
+                               ;; #'board-pawn-formation-validation ;Make sure if pawns are doubled there are enough enemy pieces missing.
+                               ;; see https://chess.stackexchange.com/questions/1482/how-do-you-know-when-a-fen-position-is-legal for a long list of maybe's.
+                               ))
+         (result (reduce
+                  (lambda (acc validation-fn)
+                    (multiple-value-bind (valid? reason)
+                        (funcall validation-fn board-state)
+                      (arrows:-> acc
+                                 (fset:with :valid? (and valid? (fset:@ acc :valid?)))
+                                 (fset:with :reasons (fset:with (fset:@ acc :reasons) reason)))))
+                  validation-fns
+                  :initial-value (fset:map (:valid? t) (:reasons (fset:empty-set))))))
+    (values (fset:@ result :valid?) (fset:less (fset:@ result :reasons) nil))))
+
+(defun board-state->fen (board-state)
+  board-state)
 
 (defun is-seventy-five-moves-draw? (board-state &optional (legal-moves (generate-legal-moves board-state)))
   (and (not (null legal-moves))
