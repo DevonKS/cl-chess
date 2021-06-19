@@ -692,8 +692,92 @@
                   :initial-value (fset:map (:valid? t) (:reasons (fset:empty-set))))))
     (values (fset:@ result :valid?) (fset:less (fset:@ result :reasons) nil))))
 
+(defun fen->board-state (fen)
+  (ppcre:register-groups-bind
+      (board-str turn-str castling-rights-str ep-square-str (#'parse-integer num-half-moves num-full-moves))
+      ("^([rnbqkpRNBQKP12345678\/]+) ([wb]) (K?Q?k?q?|-) ([a-h][36]|-) ([0-9]+) ([0-9]+)$" fen :sharedp t)
+    (let* ((board (reduce
+                   (lambda (acc c)
+                     (let ((new-cs (case c
+                                     ((#\r #\n #\b #\q #\k #\p #\R #\N #\B #\Q #\K #\P) (fset:seq c))
+                                     ((#\/) (fset:seq #\newline #\space))
+                                     ((#\1) (fset:seq #\.))
+                                     ((#\2) (fset:seq #\. #\.))
+                                     ((#\3) (fset:seq #\. #\. #\.))
+                                     ((#\4) (fset:seq #\. #\. #\. #\.))
+                                     ((#\5) (fset:seq #\. #\. #\. #\. #\.))
+                                     ((#\6) (fset:seq #\. #\. #\. #\. #\. #\.))
+                                     ((#\7) (fset:seq #\. #\. #\. #\. #\. #\. #\.))
+                                     ((#\8) (fset:seq #\. #\. #\. #\. #\. #\. #\. #\.)))))
+                       (fset:concat acc new-cs)))
+                   board-str
+                   :initial-value (fset:empty-seq)))
+           (board (fset:concat (fset:convert 'fset:seq (format nil "         ~%         ~% "))
+                               board
+                               (fset:convert 'fset:seq (format nil "~%         ~%         ~%")))))
+      (fset:map (:board board)
+                (:turn (cond
+                         ((string= turn-str "w") +white+)
+                         ((string= turn-str "b") +black+)))
+                (:moves (fset:empty-seq))
+                (:num-half-moves num-half-moves)
+                (:num-full-moves num-full-moves)
+                (:white-kingside-castle (find #\K castling-rights-str :test #'equal))
+                (:white-queenside-castle (find #\Q castling-rights-str :test #'equal))
+                (:black-kingside-castle (find #\k castling-rights-str :test #'equal))
+                (:black-queenside-castle (find #\q castling-rights-str :test #'equal))
+                (:en-passant-index (if (string= "-" ep-square-str)
+                                       nil
+                                       (square->index ep-square-str)))
+                (:previous-board-states (fset:empty-seq))))))
+
 (defun board-state->fen (board-state)
-  board-state)
+  (let* ((board (fset:@ board-state :board))
+         (board-ranks (loop for n upto 7
+                            for start-index = (* 10 (+ n 2))
+                            for rank = (fset:subseq board
+                                                    (+ start-index 1)
+                                                    (+ start-index 9))
+                            for fen-rank = (fset:reduce
+                                            (lambda (acc x)
+                                              (if (eq +empty-square+ x)
+                                                  (let ((last-item (fset:last acc)))
+                                                    (if (numberp last-item)
+                                                        (fset:with acc (- (fset:size acc) 1) (+ 1 last-item))
+                                                        (fset:with acc (fset:size acc) 1)))
+                                                  (fset:with acc (fset:size acc) x)))
+                                            rank
+                                            :initial-value (fset:empty-seq))
+                            for rank-list = (fset:convert 'list fen-rank)
+                            for rank-string = (format nil "~{~A~}" rank-list)
+                            collect rank-string))
+         (board-string (format nil "~{~A~^/~}" board-ranks))
+         (turn-string (if (eq +white+ (fset:@ board-state :turn)) "w" "b"))
+         (white-kingside-castle-string (if (fset:@ board-state :white-kingside-castle) "K" ""))
+         (white-queenside-castle-string (if (fset:@ board-state :white-queenside-castle) "Q" ""))
+         (black-kingside-castle-string (if (fset:@ board-state :black-kingside-castle) "k" ""))
+         (black-queenside-castle-string (if (fset:@ board-state :black-queenside-castle) "q" ""))
+         (no-castling-string (if (and (str:empty? white-kingside-castle-string)
+                                      (str:empty? white-queenside-castle-string)
+                                      (str:empty? black-kingside-castle-string)
+                                      (str:empty? black-queenside-castle-string))
+                                 "-"
+                                 ""))
+         (ep-index (fset:@ board-state :en-passant-index))
+         (ep-square-string (if ep-index (index->square ep-index) "-"))
+         (half-moves (fset:@ board-state :num-half-moves))
+         (full-moves (fset:@ board-state :num-full-moves)))
+    (format nil "~a ~a ~a~a~a~a~a ~a ~a ~a"
+            board-string
+            turn-string
+            white-kingside-castle-string
+            white-queenside-castle-string
+            black-kingside-castle-string
+            black-queenside-castle-string
+            no-castling-string
+            ep-square-string
+            half-moves
+            full-moves)))
 
 (defun is-seventy-five-moves-draw? (board-state &optional (legal-moves (generate-legal-moves board-state)))
   (and (not (null legal-moves))
