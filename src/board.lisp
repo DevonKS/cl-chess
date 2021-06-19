@@ -231,8 +231,12 @@
                      (or (not (in-board? board dest-index))
                          (and (not include-attacking?)
                               (piece-belongs-to-color (fset:@ board dest-index) color))
-                         (and (or double-move single-move)
+                         (and single-move
                               (not (empty? board dest-index)))
+                         (and double-move
+                              (or
+                               (not (empty? board dest-index))
+                               (not (empty? board (+ dest-index (if white? SOUTH NORTH))))))
                          (and double-move
                               (not (= (row-num index)
                                       (if white? 6 1))))
@@ -250,6 +254,29 @@
                      (list "q" "r" "b" "n"))
                 (list dest-index)))
           moves))))
+
+(defun find-intermediate-indicies (i1 i2)
+  ;; Note this only works if the pieces are in the same file/rank/diagonal
+  ;; Otherwise they could result in out of the board errors
+  ;; (the index will still be in the board but the path would have travelled outside the board).
+  (let* ((source-col-num (col-num i1))
+         (dest-col-num (col-num i2))
+         (backwards-move? (< i2 i1))
+         (backwards-diagonal? (> source-col-num dest-col-num))
+         (same-file? (same-file? i1 i2))
+         (same-rank? (same-rank? i1 i2))
+         (same-diagonal? (same-diagonal? i1 i2))
+         (step (cond
+                 ((and same-rank? backwards-move?) WEST)
+                 ((and same-rank? (not backwards-move?)) EAST)
+                 ((and same-file? backwards-move?) NORTH)
+                 ((and same-file? (not backwards-move?)) SOUTH)
+                 ((and same-diagonal? backwards-move? (not backwards-diagonal?)) (+ NORTH EAST))
+                 ((and same-diagonal? backwards-move? backwards-diagonal?) (+ NORTH WEST))
+                 ((and same-diagonal? (not backwards-move?) backwards-diagonal?) (+ SOUTH WEST))
+                 ((and same-diagonal? (not backwards-move?) (not backwards-diagonal?)) (+ SOUTH EAST))))
+         (indices (range (+ i1 step) i2 :step step)))
+    indices))
 
 (defun find-pinned-pieces (board color)
   (let ((enemy-pinning-pieces (get-pinning-pieces board (enemy-color color)))
@@ -269,23 +296,7 @@
                              same-diagonal?)
                         (and (is-queen? piece)
                              (or same-file? same-rank? same-diagonal?)))
-                (let* ((source-col-num (col-num index))
-                       (dest-col-num (col-num king-index))
-                       (backwards-move? (< king-index index))
-                       (backwards-diagonal? (> source-col-num dest-col-num))
-                       ;; Note steps of this form only work because we know the piece is in the same file/rank/diagonal as the king
-                       ;; Otherwise they could result in out of the board errors
-                       ;; (the index will still be in the board but the path would have travelled outside the board).
-                       (step (cond
-                               ((and same-rank? backwards-move?) WEST)
-                               ((and same-rank? (not backwards-move?)) EAST)
-                               ((and same-file? backwards-move?) NORTH)
-                               ((and same-file? (not backwards-move?)) SOUTH)
-                               ((and same-diagonal? backwards-move? (not backwards-diagonal?)) (+ NORTH EAST))
-                               ((and same-diagonal? backwards-move? backwards-diagonal?) (+ NORTH WEST))
-                               ((and same-diagonal? (not backwards-move?) backwards-diagonal?) (+ SOUTH WEST))
-                               ((and same-diagonal? (not backwards-move?) (not backwards-diagonal?)) (+ SOUTH EAST))))
-                       (indices (range (+ index step) king-index :step step))
+                (let* ((indices (find-intermediate-indicies index king-index))
                        (pieces (arrows:->>  indices
                                             (map 'list (lambda (index) (list (fset:@ board index) index)))
                                             (remove-if (lambda (piece-index) (eq (first piece-index) EMPTY-SQUARE))))))
@@ -317,6 +328,12 @@
                          (list index dest-index)))
                    (funcall moves-fn color board index :include-attacking? include-attacking?))))
           pieces)))
+
+(defun generate-psuedo-legal-moves-from-board-state (board-state)
+  (generate-psuedo-legal-moves
+   (fset:@ board-state :board)
+   (enemy-color (fset:@ board-state :turn))
+   (fset:@ board-state :en-passant-index)))
 
 (defun generate-castling-moves (board color castling-rights attacked-indices)
   (arrows:cond-> '()
@@ -356,27 +373,43 @@
                               (list 25 27)))
                   (append (list (list 26 27))))))
 
-(defun generate-legal-moves (board-state)
+(defun generate-enemy-piece->moves (board-state)
+  (let* ((board (fset:@ board-state :board))
+         (color (fset:@ board-state :turn))
+         (enemy-color (enemy-color color)))
+    (reduce
+     (lambda (acc piece)
+       (fset:with acc piece (generate-psuedo-legal-moves
+                             board
+                             enemy-color
+                             (fset:@ board-state :en-passant-index)
+                             :pieces (list piece)
+                             :include-attacking? t)))
+     (get-pieces board enemy-color)
+     :initial-value (fset:empty-map))))
+
+(defun generate-legal-moves (board-state  &optional (enemy-piece->moves (generate-enemy-piece->moves board-state)))
   (let* ((color (fset:@ board-state :turn))
          (board (fset:@ board-state :board))
          (en-passant-index (fset:@ board-state :en-passant-index))
          (pinned-pieces (find-pinned-pieces board color))
-         (enemy-piece->moves (reduce
-                              (lambda (acc piece)
-                                (setf (gethash piece acc) (generate-psuedo-legal-moves board (enemy-color color) en-passant-index :pieces (list piece)))
-                                acc)
-                              (get-pieces board (enemy-color color))
-                              :initial-value (make-hash-table)))
-         (attacked-indices (arrows:->> (generate-psuedo-legal-moves board (enemy-color color) en-passant-index :include-attacking? t)
-                                       (map 'list #'second)
-                                       (fset:convert 'fset:set)))
          (king-piece (if (eq color WHITE) WHITE-KING BLACK-KING))
          (king-index (fset:position king-piece board))
+         (enemy-piece-attacking-king->moves (fset:filter (lambda (_ v)
+                                                           (declare (ignore _))
+                                                           (some (lambda (move) (= king-index (second move))) v))
+                                                         enemy-piece->moves))
+         (attacked-indices (fset:reduce
+                            (lambda (acc moves)
+                              (if moves
+                                  (fset:union acc (fset:convert 'fset:set (fset:image #'second moves)))
+                                  acc))
+                            (fset:range enemy-piece->moves)
+                            :initial-value (fset:empty-set)))
          (psuedo-legal-king-moves (generate-king-moves color board king-index))
          (legal-king-moves (arrows:->> psuedo-legal-king-moves
                                        (remove-if (lambda (dest-index) (fset:contains? attacked-indices dest-index)))
                                        (map 'list (lambda (dest-index) (list king-index dest-index)))))
-
          (in-check? (fset:contains? attacked-indices king-index))
          (king-castling-moves (when (not in-check?)
                                 (generate-castling-moves board color board-state attacked-indices)))
@@ -387,19 +420,22 @@
                                     :pieces (remove-if
                                              (lambda (x)
                                                (or (member (second x) pinned-pieces)
-                                                   (eq (first x) king)))
+                                                   (eq (first x) king-piece)))
                                              (get-pieces board color))))
+         (enemy-pieces-attacking-king-squares (arrows:->> enemy-piece-attacking-king->moves
+                                                          fset:domain
+                                                          (fset:image (lambda (enemy-piece)
+                                                                        (let ((enemy-piece-index (second enemy-piece)))
+                                                                          (fset:with (fset:convert 'fset:set (find-intermediate-indicies enemy-piece-index king-index))
+                                                                                     enemy-piece-index))))
+                                                          (fset:convert 'list)))
          (other-legal-moves (if in-check?
                                 (remove-if-not
                                  (lambda (move)
                                    (every
                                     (lambda (indices)
                                       (fset:contains? indices (second move)))
-                                    (arrows:->> enemy-piece->moves
-                                                alexandria:hash-table-values
-                                                (map 'list
-                                                     (lambda (moves)
-                                                       (fset:convert 'fset:set (alexandria:flatten moves)))))))
+                                    enemy-pieces-attacking-king-squares))
                                  other-psuedo-legal-moves)
                                 other-psuedo-legal-moves)))
     (append legal-king-moves king-castling-moves other-legal-moves)))
@@ -409,63 +445,63 @@
 
 (defun push-move (board-state move)
   (ppcre:register-groups-bind
-   (source-square dest-square promotion)
-   ("([a-h][1-8])([a-h][1-8])([qbnr]|$)" move :sharedp t)
-   (let* ((source-index (square->index source-square))
-          (dest-index (square->index dest-square))
-          (board (fset:@ board-state :board))
-          (color (fset:@ board-state :turn))
-          (piece (fset:@ board source-index))
-          (promotion-piece (when (string/= promotion "")
-                             (case promotion
-                               ("q" (if (eq color WHITE) WHITE-QUEEN BLACK-QUEEN))
-                               ("b" (if (eq color WHITE) WHITE-BISHOP BLACK-BISHOP))
-                               ("n" (if (eq color WHITE) WHITE-KNIGHT BLACK-KNIGHT))
-                               ("r" (if (eq color WHITE) WHITE-ROOK BLACK-ROOK)))))
-          (new-piece (if promotion-piece promotion-piece piece))
-          (new-board (arrows:-> board
-                                (fset:with source-index EMPTY-SQUARE)
-                                (fset:with dest-index new-piece)))
-          (pawn-move? (is-pawn? piece))
-          (capture? (not (empty? board dest-index)))
-          (new-half-move-count (if (or pawn-move? capture?)
-                                   0
-                                   (+ (fset:@ board-state :num-half-moves) 1)))
-          (num-full-moves (fset:@ board-state :num-full-moves))
-          (new-full-move-count (if (eql BLACK color)
-                                   (+ 1 num-full-moves)
-                                   num-full-moves))
-          (en-passant-index (if (or (and (eq WHITE color)
-                                         (= 6 (row-num source-index))
-                                         (= 4 (row-num dest-index)))
-                                    (and (eq BLACK color)
-                                         (= 1 (row-num source-index))
-                                         (= 3 (row-num dest-index))))
-                                (/ (+ dest-index source-index) 2)
-                                nil))
-          (new-moves (fset:with-last (fset:@ board-state :moves) move))
-          (previous-board-states (fset:with-last (fset:@ board-state :previous-board-states) board-state))
-          (white-kingside-castle (and (fset:@ board-state :white-kingside-castle)
-                                      (/= source-index 95 98)))
-          (white-queenside-castle (and (fset:@ board-state :white-queenside-castle)
-                                       (/= source-index 95 91)))
-          (black-kingside-castle (and (fset:@ board-state :black-kingside-castle)
-                                      (/= source-index 25 28)))
-          (black-queenside-castle (and (fset:@ board-state :black-queenside-castle)
-                                       (/= source-index 25 21))))
-     (progn
-       (setf (fset:@ board-state :board) new-board)
-       (setf (fset:@ board-state :turn) (enemy-color color))
-       (setf (fset:@ board-state :num-half-moves) new-half-move-count)
-       (setf (fset:@ board-state :num-full-moves) new-full-move-count)
-       (setf (fset:@ board-state :moves) new-moves)
-       (setf (fset:@ board-state :en-passant-index) en-passant-index)
-       (setf (fset:@ board-state :previous-board-states) previous-board-states)
-       (setf (fset:@ board-state :white-kingside-castle) white-kingside-castle)
-       (setf (fset:@ board-state :white-queenside-castle) white-queenside-castle)
-       (setf (fset:@ board-state :black-kingside-castle) black-kingside-castle)
-       (setf (fset:@ board-state :black-queenside-castle) black-queenside-castle)
-       board-state))))
+      (source-square dest-square promotion)
+      ("([a-h][1-8])([a-h][1-8])([qbnr]|$)" move :sharedp t)
+    (let* ((source-index (square->index source-square))
+           (dest-index (square->index dest-square))
+           (board (fset:@ board-state :board))
+           (color (fset:@ board-state :turn))
+           (piece (fset:@ board source-index))
+           (promotion-piece (when (string/= promotion "")
+                              (case promotion
+                                ("q" (if (eq color WHITE) WHITE-QUEEN BLACK-QUEEN))
+                                ("b" (if (eq color WHITE) WHITE-BISHOP BLACK-BISHOP))
+                                ("n" (if (eq color WHITE) WHITE-KNIGHT BLACK-KNIGHT))
+                                ("r" (if (eq color WHITE) WHITE-ROOK BLACK-ROOK)))))
+           (new-piece (if promotion-piece promotion-piece piece))
+           (new-board (arrows:-> board
+                                 (fset:with source-index EMPTY-SQUARE)
+                                 (fset:with dest-index new-piece)))
+           (pawn-move? (is-pawn? piece))
+           (capture? (not (empty? board dest-index)))
+           (new-half-move-count (if (or pawn-move? capture?)
+                                    0
+                                    (+ (fset:@ board-state :num-half-moves) 1)))
+           (num-full-moves (fset:@ board-state :num-full-moves))
+           (new-full-move-count (if (eql BLACK color)
+                                    (+ 1 num-full-moves)
+                                    num-full-moves))
+           (en-passant-index (if (or (and (eq WHITE color)
+                                          (= 6 (row-num source-index))
+                                          (= 4 (row-num dest-index)))
+                                     (and (eq BLACK color)
+                                          (= 1 (row-num source-index))
+                                          (= 3 (row-num dest-index))))
+                                 (/ (+ dest-index source-index) 2)
+                                 nil))
+           (new-moves (fset:with-last (fset:@ board-state :moves) move))
+           (previous-board-states (fset:with-last (fset:@ board-state :previous-board-states) board-state))
+           (white-kingside-castle (and (fset:@ board-state :white-kingside-castle)
+                                       (/= source-index 95 98)))
+           (white-queenside-castle (and (fset:@ board-state :white-queenside-castle)
+                                        (/= source-index 95 91)))
+           (black-kingside-castle (and (fset:@ board-state :black-kingside-castle)
+                                       (/= source-index 25 28)))
+           (black-queenside-castle (and (fset:@ board-state :black-queenside-castle)
+                                        (/= source-index 25 21))))
+      (progn
+        (setf (fset:@ board-state :board) new-board)
+        (setf (fset:@ board-state :turn) (enemy-color color))
+        (setf (fset:@ board-state :num-half-moves) new-half-move-count)
+        (setf (fset:@ board-state :num-full-moves) new-full-move-count)
+        (setf (fset:@ board-state :moves) new-moves)
+        (setf (fset:@ board-state :en-passant-index) en-passant-index)
+        (setf (fset:@ board-state :previous-board-states) previous-board-states)
+        (setf (fset:@ board-state :white-kingside-castle) white-kingside-castle)
+        (setf (fset:@ board-state :white-queenside-castle) white-queenside-castle)
+        (setf (fset:@ board-state :black-kingside-castle) black-kingside-castle)
+        (setf (fset:@ board-state :black-queenside-castle) black-queenside-castle)
+        board-state))))
 
 (defun push-moves (board-state moves)
   (reduce #'push-move moves :initial-value board-state))
@@ -536,12 +572,9 @@
                  (fset:equal? (fset:set WHITE-KING WHITE-KNIGHT) sorted-white-pieces)
                  (fset:equal? (fset:set WHITE-KING WHITE-KNIGHT WHITE-KNIGHT) sorted-white-pieces))))))
 
-;; FIXME pass-in enemy-moves for perf??
-(defun in-check? (board-state)
+(defun in-check? (board-state &optional (enemy-psuedo-legal-moves (generate-psuedo-legal-moves-from-board-state board-state)))
   (let* ((color (fset:@ board-state :turn))
          (board (fset:@ board-state :board))
-         (en-passant-index (fset:@ board-state :en-passant-index))
-         (enemy-psuedo-legal-moves (generate-psuedo-legal-moves board (enemy-color color) en-passant-index))
          (attacked-indices (arrows:->> enemy-psuedo-legal-moves
                                        (map 'list #'second)
                                        (fset:convert 'fset:set)))
@@ -549,23 +582,29 @@
          (king-index (fset:position king-piece board)))
     (fset:contains? attacked-indices king-index)))
 
-(defun is-stalemate? (board-state &optional (legal-moves (generate-legal-moves board-state)))
+(defun is-stalemate? (board-state &optional
+                                    (legal-moves (generate-legal-moves board-state))
+                                    (enemy-psuedo-legal-moves (generate-psuedo-legal-moves-from-board-state board-state)))
   (and (null legal-moves)
-       (not (in-check? board-state))))
+       (not (in-check? board-state enemy-psuedo-legal-moves))))
 
-(defun is-checkmate? (board-state &optional (legal-moves (generate-legal-moves board-state)))
+(defun is-checkmate? (board-state &optional
+                                    (legal-moves (generate-legal-moves board-state))
+                                    (enemy-psuedo-legal-moves (generate-psuedo-legal-moves-from-board-state board-state)))
   (and (null legal-moves)
-       (in-check? board-state)))
+       (in-check? board-state enemy-psuedo-legal-moves)))
 
-(defun outcome (board-state claim-draw)
+(defun outcome (board-state claim-draw &optional
+                                         (legal-moves (generate-legal-moves board-state))
+                                         (enemy-psuedo-legal-moves (generate-psuedo-legal-moves-from-board-state board-state)))
   (cond
-    ((is-checkmate? board-state) (list (enemy-color (fset:@ board-state :turn)) :checkmate))
+    ((is-checkmate? board-state legal-moves enemy-psuedo-legal-moves) (list (enemy-color (fset:@ board-state :turn)) :checkmate))
     ((is-insufficient-material? board-state) :insufficient-material)
-    ((is-stalemate? board-state) :stalemate)
-    ((is-seventy-five-moves-draw? board-state) :seventy-five-moves-draw)
-    ((is-fivefold-repition-draw? board-state) :fivefold-repition-draw)
-    ((is-fifty-moves-draw? board-state claim-draw) :fifty-moves-draw)
-    ((is-threefold-repition-draw? board-state claim-draw) :threefold-repition-draw)))
+    ((is-stalemate? board-state legal-moves enemy-psuedo-legal-moves) :stalemate)
+    ((is-seventy-five-moves-draw? board-state legal-moves) :seventy-five-moves-draw)
+    ((is-fivefold-repition-draw? board-state legal-moves) :fivefold-repition-draw)
+    ((is-fifty-moves-draw? board-state claim-draw legal-moves) :fifty-moves-draw)
+    ((is-threefold-repition-draw? board-state claim-draw legal-moves) :threefold-repition-draw)))
 
 (defun is-game-over? (board-state claim-draw)
   (or (is-checkmate? board-state)
@@ -587,13 +626,20 @@
 (defun play-game ()
   (loop for board-state = (make-board-state) then (push-move board-state move)
         for pb = (print-board (fset:@ board-state :board))
-        for outcome = (outcome board-state t)
+        for enemy-piece->moves = (generate-enemy-piece->moves board-state)
+        for legal-moves = (generate-legal-moves board-state enemy-piece->moves)
+        for color = (fset:@ board-state :turn)
+        for en-passant-index = (fset:@ board-state :en-passant-index)
+        for board = (fset:@ board-state :board)
+        for enemy-psuedo-legal-moves = (generate-psuedo-legal-moves board (enemy-color color) en-passant-index :include-attacking? t)
+        for outcome = (outcome board-state t legal-moves)
         until (not (null outcome))
         for move = (get-move board-state)
         finally (format t "~a~%" outcome)))
 
 ;; TODO
-;; Lookup legal moves and enemy attacked squares only once in turn.
+;; DONE Lookup legal moves and enemy attacked squares only once in turn.
+;; DONE The previous refactor means there is a lot of duplicate code. I think one solution is to create the same fns that accept board state instead of all things
 ;; FEN import and export
 ;; SAN moves
 ;; AI
