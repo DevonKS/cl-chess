@@ -12,7 +12,7 @@
             (:turn +white+)
             (:moves (fset:empty-seq))
             (:num-half-moves 0)
-            (:num-full-moves 0)
+            (:num-full-moves 1)
             (:white-kingside-castle t)
             (:white-queenside-castle t)
             (:black-kingside-castle t)
