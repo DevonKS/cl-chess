@@ -547,6 +547,66 @@
 (defun push-moves (board-state moves)
   (reduce #'push-move moves :initial-value board-state))
 
+(defun find-move (board-state source-piece source-file source-rank capture? dest-square promotion)
+  (let* ((legal-moves (generate-legal-moves board-state))
+         (board (fset:@ board-state :board))
+         (color (fset:@ board-state :turn))
+         (legal-move-triplets (map 'list (lambda (move) (cons (fset:@ board (first move)) move)) legal-moves))
+         (dest-index (square->index dest-square))
+         (dest-empty? (empty? board dest-index))
+         (source-piece (if source-piece source-piece "P"))
+         (piece-pred (alexandria:switch (source-piece :test #'equal)
+                       ("P" #'is-pawn?)
+                       ("N" #'is-knight?)
+                       ("B" #'is-bishop?)
+                       ("K" #'is-king?)
+                       ("Q" #'is-queen?)
+                       ("R" #'is-rook?)))
+         (potential-moves (remove-if (lambda (triplet)
+                                       (destructuring-bind (tpiece tsource-index tdest-index) triplet
+                                         (or (and source-piece
+                                                  (not (funcall piece-pred tpiece)))
+                                             (and source-file
+                                                  (not (eq (char source-file 0) (index->file tsource-index))))
+                                             (and source-rank
+                                                  (not (= source-rank (index->rank tsource-index))))
+                                             (not (= dest-index tdest-index))
+                                             (and capture?
+                                                  dest-empty?)
+                                             (and (not capture?)
+                                                  (not dest-empty?))
+                                             (and promotion
+                                                  (or (not (is-pawn? tpiece))
+                                                      (not (= (index->rank dest-index)
+                                                              (if (eq +white+ color) 8 1))))))))
+                                     legal-move-triplets))
+         (move (when (= 1 (length potential-moves))
+                 (first potential-moves))))
+    (when move
+      (move->uci-move-name (list (second move) (third move) (string-trim '(#\=) (if promotion promotion "")))))))
+
+(defun san->uci-move-name (board-state san)
+  (cond
+    ((member san (list "O-O" "O-O+" "O-O#") :test #'equal)
+     (let ((white? (eq +white+ (fset:@ board-state :turn))))
+       (find-move board-state "K" "e" (if white? 1 8) nil (if white? "g1" "g8") nil)))
+
+
+    ((member san (list "O-O-O" "O-O-O+" "O-O-O#") :test #'equal)
+     (let ((white? (eq +white+ (fset:@ board-state :turn))))
+       (find-move board-state "K" "e" (if white? 1 8) nil (if white? "g1" "g8") nil)))
+
+    (t (ppcre:register-groups-bind
+           (source-piece source-file (#'parse-integer source-rank) capture? dest-square promotion)
+           ("^([NBKRQ])?([a-h])?([1-8])?([\x])?([a-h][1-8])(=[nbrq])?[\+#]?$" san :sharedp t)
+         (find-move board-state source-piece source-file source-rank capture? dest-square promotion)))))
+
+(defun push-san-move (board-state san)
+  (push-move board-state (san->uci-move-name board-state san)))
+
+(defun push-san-moves (board-state san-moves)
+  (reduce #'push-san-move san-moves :initial-value board-state))
+
 (defun pop-move (board-state)
   (fset:last (fset:@ board-state :previous-board-states)))
 
@@ -920,15 +980,14 @@
       (is-draw? board-state claim-draw)))
 
 (defun get-move (board-state)
-  (let* ((legal-moves (generate-legal-moves board-state))
-         (legal-move-names (map 'list #'move->uci-move-name legal-moves))
-         (prompt (lambda (s)
+  (let* ((prompt (lambda (s)
                    (format t "~&~a: " s)
                    (finish-output)
                    (read-line))))
     (loop for move = (funcall prompt "Please enter a valid move")
-          until (member move legal-move-names :test #'string=)
-          finally (return move))))
+          for uci-move-name = (san->uci-move-name board-state move)
+          until uci-move-name
+          finally (return uci-move-name))))
 
 (defun play-game ()
   (loop for board-state = (make-board-state) then (push-move board-state move)
