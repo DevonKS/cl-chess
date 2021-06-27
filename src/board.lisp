@@ -1134,6 +1134,6 @@
 ;; DONE The previous refactor means there is a lot of duplicate code. I think one solution is to create the same fns that accept board state instead of all things
 ;; DONE FEN import and export
 ;; DONE SAN moves
-;; PGN import/export
+;; DONE PGN import/export
 ;; UI
 ;; AI
