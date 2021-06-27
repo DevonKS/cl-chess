@@ -953,6 +953,53 @@
             half-moves
             full-moves)))
 
+(defun pgn->board-state (pgn)
+  (let ((games (str:split (format nil "~%~%") pgn)))
+    (if (> (length games) 2)
+        :muliple-games-not-supported
+        (let* ((headers (str:lines (first games)))
+               (parsed-headers (reduce
+                                (lambda (acc header)
+                                  (ppcre:register-groups-bind
+                                      (header-name header-value)
+                                      ("^\\[(\\w+) \\\"([^\\]\\\"]+)\\\"\\]$" header :sharedp t)
+                                    (fset:with-last acc (list header-name header-value))))
+                                headers
+                                :initial-value (fset:empty-seq)))
+               (moves (str:split " " (second games)))
+               (parsed-moves (loop for index from 0 to (max 0 (- (length moves) 2))
+                                   for move in moves
+                                   when (not (= 0 (mod index 3)))
+                                     collect move)))
+          (push-san-moves (make-board-state parsed-headers) parsed-moves)))))
+
+(defun board-state->pgn (board-state)
+  (let* ((headers (fset:@ board-state :headers))
+         (pgn-headers (str:join (format nil "~%")
+                                (fset:convert 'list
+                                              (fset:image
+                                               (lambda (header)
+                                                 (format nil "[~a \"~a\"]" (first header) (second header)))
+                                               headers))))
+         (san-moves (fset:@ board-state :san-moves))
+         (pgn-moves (loop for i from 0 to (floor (/ (fset:size san-moves) 2))
+                          for white-move = (or (fset:@ san-moves (* 2 i)) "")
+                          for black-move = (or (fset:@ san-moves (+ (* 2 i) 1)) "")
+                          append (list (format nil "~a." (+ 1 i)) white-move black-move)))
+         (game-outcome (outcome board-state t))
+         (outcome-str (case game-outcome
+                        (:white-checkmate "1-0")
+                        (:black-checkmate "0-1")
+                        ((:insufficient-material
+                          :stalemate
+                          :fifty-moves-draw
+                          :seventy-five-moves-draw
+                          :threefold-repition-draw
+                          :fivefold-repition-draw) "0.5-0.5")
+                        (otherwise "*")))
+         (pgn-moves-str (str:join " " pgn-moves)))
+    (format nil "~a~%~%~a~a~%" pgn-headers pgn-moves-str outcome-str)))
+
 (defun is-seventy-five-moves-draw? (board-state &optional (legal-moves (generate-legal-moves board-state)))
   (and (not (null legal-moves))
        (>= (fset:@ board-state :num-half-moves) 150)))
